@@ -1,0 +1,21 @@
+name: elite-ticketing
+
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: elite
+      POSTGRES_PASSWORD: elite_dev_password
+      POSTGRES_DB: elite_ticketing
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - elite_ticketing_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U elite -d elite_ticketing"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  elite_ticketing_postgres_data:
