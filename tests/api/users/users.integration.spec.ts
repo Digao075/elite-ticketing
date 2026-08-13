@@ -20,11 +20,13 @@ describe('UsersService PostgreSQL integration', () => {
   let prisma: PrismaService;
   let users: UsersService;
   const createdFixtureIds: string[] = [];
+  const originalAuthJwtSecret = process.env.AUTH_JWT_SECRET;
   let sentinel: Awaited<ReturnType<PrismaService['user']['findUniqueOrThrow']>>;
 
   beforeAll(async () => {
     const { assertDedicatedTestDatabaseUrl } = await loadTestDatabaseRunner();
     assertDedicatedTestDatabaseUrl(process.env.DATABASE_URL);
+    process.env.AUTH_JWT_SECRET = 'users-integration-test-signing-secret';
 
     moduleRef = await Test.createTestingModule({
       imports: [AppModule],
@@ -52,6 +54,11 @@ describe('UsersService PostgreSQL integration', () => {
     } finally {
       await prisma?.$disconnect();
       await moduleRef?.close();
+      if (originalAuthJwtSecret === undefined) {
+        delete process.env.AUTH_JWT_SECRET;
+      } else {
+        process.env.AUTH_JWT_SECRET = originalAuthJwtSecret;
+      }
     }
   });
 
