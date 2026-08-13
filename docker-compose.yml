@@ -17,5 +17,19 @@ services:
       timeout: 5s
       retries: 10
 
+  db-test:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: elite_test
+      POSTGRES_PASSWORD: elite_test_password
+      POSTGRES_DB: elite_ticketing_test
+    ports:
+      - "127.0.0.1:5434:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U elite_test -d elite_ticketing_test"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
 volumes:
   elite_ticketing_postgres_data:

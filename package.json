@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "pnpm --parallel --filter @elite-ticketing/api --filter @elite-ticketing/web dev",
     "build": "pnpm -r --if-present build",
-    "test": "pnpm -r --if-present test",
+    "test": "node scripts/run-tests.mjs",
     "test:api": "pnpm --filter @elite-ticketing/api test",
     "test:web": "pnpm --filter @elite-ticketing/web test",
     "db:up": "docker compose up -d db",
