@@ -13,6 +13,11 @@ enum Role {
   GATE
 }
 
+enum EventStatus {
+  DRAFT
+  PUBLISHED
+}
+
 model User {
   id           String   @id @default(uuid()) @db.Uuid
   email        String   @unique
@@ -20,4 +25,33 @@ model User {
   role         Role
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
+  events       Event[]
+}
+
+model Event {
+  id                      String      @id @default(uuid()) @db.Uuid
+  status                  EventStatus @default(DRAFT)
+  organizerId             String      @db.Uuid
+  idempotencyKey          String      @db.Uuid
+  startsAt                DateTime    @db.Timestamptz(3)
+  movieEndsAt             DateTime    @db.Timestamptz(3)
+  occupiedUntil           DateTime    @db.Timestamptz(3)
+  venueName               String      @db.VarChar(120)
+  auditoriumName          String      @db.VarChar(80)
+  venueKey                String
+  auditoriumKey           String
+  contentProviderMovieId  Int
+  contentTitle            String
+  contentReleaseDate      String?
+  contentPosterPath       String?
+  contentBackdropPath     String?
+  contentOverview         String
+  contentRuntimeMinutes   Int
+  contentGenres           String[]
+  contentOriginalLanguage String
+  createdAt               DateTime    @default(now()) @db.Timestamptz(3)
+  updatedAt               DateTime    @updatedAt @db.Timestamptz(3)
+  organizer               User        @relation(fields: [organizerId], references: [id], onDelete: Restrict)
+
+  @@unique([organizerId, idempotencyKey], map: "Event_organizerId_idempotencyKey_key")
 }
