@@ -4,6 +4,7 @@ import { resolve } from 'node:path';
 
 export const DEDICATED_TEST_DATABASE_URL =
   'postgresql://elite_test:elite_test_password@127.0.0.1:5434/elite_ticketing_test?schema=public';
+export const DEDICATED_TEST_TMDB_API_KEY = 'test-only-inert-tmdb-key';
 
 const refusalMessage =
   'Refusing database test access: DATABASE_URL is not the dedicated Docker test database';
@@ -48,6 +49,7 @@ export async function runWithDisposableTestDatabase(runCommand = commandRunner) 
   const testEnvironment = {
     ...process.env,
     DATABASE_URL: DEDICATED_TEST_DATABASE_URL,
+    TMDB_API_KEY: DEDICATED_TEST_TMDB_API_KEY,
   };
   let exitCode = 1;
 

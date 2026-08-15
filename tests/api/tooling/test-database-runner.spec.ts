@@ -15,6 +15,7 @@ type CommandRunner = (invocation: CommandInvocation) => Promise<number>;
 
 type TestDatabaseRunnerModule = {
   DEDICATED_TEST_DATABASE_URL: string;
+  DEDICATED_TEST_TMDB_API_KEY: 'test-only-inert-tmdb-key';
   assertDedicatedTestDatabaseUrl(databaseUrl: string | undefined): URL;
   runWithDisposableTestDatabase(runCommand?: CommandRunner): Promise<number>;
 };
@@ -57,6 +58,39 @@ describe('disposable PostgreSQL test database runner', () => {
 
     expect(testDatabaseRunner.DEDICATED_TEST_DATABASE_URL).toBe(dedicatedDatabaseUrl);
   });
+
+  it.each([undefined, '', 'ambient-real-tmdb-key'])(
+    'AC-1 injects the inert TMDb key into workspace tests when the parent value is %j without changing the parent',
+    async (ambientTmdbApiKey) => {
+      const previousTmdbApiKey = process.env.TMDB_API_KEY;
+      const testDatabaseRunner = await loadTestDatabaseRunner();
+      const { invocations, runCommand } = recordingCommandRunner([0, 0, 0, 0, 0]);
+
+      if (ambientTmdbApiKey === undefined) {
+        delete process.env.TMDB_API_KEY;
+      } else {
+        process.env.TMDB_API_KEY = ambientTmdbApiKey;
+      }
+
+      try {
+        expect(testDatabaseRunner.DEDICATED_TEST_TMDB_API_KEY).toBe('test-only-inert-tmdb-key');
+
+        await expect(testDatabaseRunner.runWithDisposableTestDatabase(runCommand)).resolves.toBe(0);
+
+        const workspaceTests = invocations.find(
+          ({ command, args }) => command === 'pnpm' && args.join(' ') === '-r --if-present test',
+        );
+        expect(workspaceTests?.env?.TMDB_API_KEY).toBe(testDatabaseRunner.DEDICATED_TEST_TMDB_API_KEY);
+        expect(process.env.TMDB_API_KEY).toBe(ambientTmdbApiKey);
+      } finally {
+        if (previousTmdbApiKey === undefined) {
+          delete process.env.TMDB_API_KEY;
+        } else {
+          process.env.TMDB_API_KEY = previousTmdbApiKey;
+        }
+      }
+    },
+  );
 
   it('AC-1 runs stale cleanup, health-checked startup, migration, workspace tests, and final cleanup with the dedicated URL', async () => {
     const testDatabaseRunner = await loadTestDatabaseRunner();
