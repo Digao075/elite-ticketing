@@ -1,4 +1,6 @@
-import { BadGatewayException, Inject, Injectable } from '@nestjs/common';
+import { BadGatewayException, Inject, Injectable, UnprocessableEntityException } from '@nestjs/common';
+
+import type { EventContentSelection } from './content-selection-token.service';
 
 export const TMDB_FETCH = 'TMDB_FETCH';
 export const TMDB_HTTP_TIMEOUT_MS = 5000;
@@ -30,9 +32,12 @@ type TmdbMovie = {
 type TmdbMovieDetail = TmdbMovie & {
   runtime: number | null;
   genres: { name: string }[];
+  backdrop_path?: string | null;
+  original_language?: string;
 };
 
 const PROVIDER_UNAVAILABLE_MESSAGE = 'Catalog provider unavailable';
+const UNSCHEDULABLE_SELECTION_MESSAGE = 'Selected movie must have a positive runtime';
 
 @Injectable()
 export class TmdbCatalogService {
@@ -121,6 +126,26 @@ export class TmdbCatalogService {
     }
   }
 
+  async getMovieSelectionDetails(providerMovieId: number): Promise<EventContentSelection> {
+    let detail: CatalogMovieDetail & { backdropPath: string | null; originalLanguage: string };
+    try {
+      const response = await this.tmdbFetch(this.detailUrl(providerMovieId), {
+        method: 'GET',
+        signal: AbortSignal.timeout(TMDB_HTTP_TIMEOUT_MS),
+      });
+      if (!response.ok) throw new Error('TMDb returned an unsuccessful response');
+      detail = this.normalizeSelectionDetailPayload(await response.json(), providerMovieId);
+    } catch {
+      throw new BadGatewayException(PROVIDER_UNAVAILABLE_MESSAGE);
+    }
+
+    if (detail.runtimeMinutes === null || detail.runtimeMinutes === 0) {
+      throw new UnprocessableEntityException(UNSCHEDULABLE_SELECTION_MESSAGE);
+    }
+
+    return detail;
+  }
+
   private normalizeSearchPayload(payload: unknown): CatalogMovieSummary[] {
     if (!this.isRecord(payload) || !Array.isArray(payload.results)) {
       throw new Error('Invalid TMDb search payload');
@@ -190,6 +215,29 @@ export class TmdbCatalogService {
       runtimeMinutes: detail.runtime,
       genres: detail.genres.map((genre) => genre.name),
     };
+  }
+
+  private normalizeSelectionDetailPayload(
+    payload: unknown,
+    providerMovieId: number,
+  ): CatalogMovieDetail & { backdropPath: string | null; originalLanguage: string } {
+    const detail = this.normalizeDetailPayload(payload, providerMovieId);
+    if (!this.isRecord(payload) || (typeof payload.backdrop_path !== 'string' && payload.backdrop_path !== null) ||
+      typeof payload.original_language !== 'string' || payload.original_language.length === 0) {
+      throw new Error('Invalid TMDb selection detail');
+    }
+    return { ...detail, backdropPath: payload.backdrop_path, originalLanguage: payload.original_language };
+  }
+
+  private detailUrl(providerMovieId: number): URL {
+    const url = new URL(`https://api.themoviedb.org/3/movie/${providerMovieId}`);
+    url.search = new URLSearchParams({
+      api_key: this.apiKey,
+      language: 'pt-BR',
+      region: 'BR',
+      include_adult: 'false',
+    }).toString();
+    return url;
   }
 
   private isRecord(value: unknown): value is Record<string, unknown> {

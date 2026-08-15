@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { readFile } from 'node:fs/promises';
 
 const dedicatedDatabaseUrl =
   'postgresql://elite_test:elite_test_password@127.0.0.1:5434/elite_ticketing_test?schema=public';
@@ -16,6 +17,7 @@ type CommandRunner = (invocation: CommandInvocation) => Promise<number>;
 type TestDatabaseRunnerModule = {
   DEDICATED_TEST_DATABASE_URL: string;
   DEDICATED_TEST_TMDB_API_KEY: 'test-only-inert-tmdb-key';
+  DEDICATED_TEST_CONTENT_SELECTION_SECRET: 'test-only-inert-content-selection-secret';
   assertDedicatedTestDatabaseUrl(databaseUrl: string | undefined): URL;
   runWithDisposableTestDatabase(runCommand?: CommandRunner): Promise<number>;
 };
@@ -53,6 +55,11 @@ function expectDedicatedCleanup(invocation: CommandInvocation): void {
 }
 
 describe('disposable PostgreSQL test database runner', () => {
+  it('AC-5 documents the required content-selection secret with its exact safe placeholder', async () => {
+    const envExample = await readFile(new URL('../../../.env.example', import.meta.url), 'utf8');
+    expect(envExample).toContain('CONTENT_SELECTION_SECRET=replace-with-a-long-random-secret-before-issuing-content-selections');
+  });
+
   it('AC-1 exposes the exact dedicated database URL without starting the lifecycle on import', async () => {
     const testDatabaseRunner = await loadTestDatabaseRunner();
 
@@ -91,6 +98,47 @@ describe('disposable PostgreSQL test database runner', () => {
       }
     },
   );
+
+  it.each([undefined, '', 'ambient-real-content-selection-secret'])(
+    'AC-5 injects the inert content-selection secret into workspace tests when the parent value is %j without changing the parent',
+    async (ambientSecret) => {
+      const previousSecret = process.env.CONTENT_SELECTION_SECRET;
+      const testDatabaseRunner = await loadTestDatabaseRunner();
+      const { invocations, runCommand } = recordingCommandRunner([0, 0, 0, 0, 0]);
+      if (ambientSecret === undefined) delete process.env.CONTENT_SELECTION_SECRET;
+      else process.env.CONTENT_SELECTION_SECRET = ambientSecret;
+
+      try {
+        expect(testDatabaseRunner.DEDICATED_TEST_CONTENT_SELECTION_SECRET).toBe('test-only-inert-content-selection-secret');
+        await expect(testDatabaseRunner.runWithDisposableTestDatabase(runCommand)).resolves.toBe(0);
+        const workspaceTests = invocations.find(({ command, args }) => command === 'pnpm' && args.join(' ') === '-r --if-present test');
+        expect(workspaceTests?.env?.CONTENT_SELECTION_SECRET).toBe(testDatabaseRunner.DEDICATED_TEST_CONTENT_SELECTION_SECRET);
+        expect(process.env.CONTENT_SELECTION_SECRET).toBe(ambientSecret);
+      } finally {
+        if (previousSecret === undefined) delete process.env.CONTENT_SELECTION_SECRET;
+        else process.env.CONTENT_SELECTION_SECRET = previousSecret;
+      }
+    },
+  );
+
+  it('AC-5 keeps the content-selection secret out of the Prisma migration child and supplies it only to workspace tests', async () => {
+    const testDatabaseRunner = await loadTestDatabaseRunner();
+    const { invocations, runCommand } = recordingCommandRunner([0, 0, 0, 0, 0]);
+
+    await expect(testDatabaseRunner.runWithDisposableTestDatabase(runCommand)).resolves.toBe(0);
+
+    const migration = invocations[2];
+    const workspaceTests = invocations.find(({ command, args }) => command === 'pnpm' && args.join(' ') === '-r --if-present test');
+
+    expect(migration.env?.DATABASE_URL).toBe(dedicatedDatabaseUrl);
+    expect(migration.env?.CONTENT_SELECTION_SECRET).toBeUndefined();
+    expect(workspaceTests?.env?.CONTENT_SELECTION_SECRET).toBe(testDatabaseRunner.DEDICATED_TEST_CONTENT_SELECTION_SECRET);
+    expect(
+      invocations.filter((invocation) => invocation !== workspaceTests).every(
+        ({ env }) => env?.CONTENT_SELECTION_SECRET === undefined,
+      ),
+    ).toBe(true);
+  });
 
   it('AC-1 runs stale cleanup, health-checked startup, migration, workspace tests, and final cleanup with the dedicated URL', async () => {
     const testDatabaseRunner = await loadTestDatabaseRunner();

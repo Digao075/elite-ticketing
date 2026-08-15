@@ -6,6 +6,7 @@ import request from 'supertest';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 
 import { AppModule } from '../../../apps/api/src/app.module';
+import { CONTENT_SELECTION_CLOCK } from '../../../apps/api/src/catalog/content-selection-token.service';
 import { TMDB_FETCH, TMDB_HTTP_TIMEOUT_MS, type TmdbFetch } from '../../../apps/api/src/catalog/tmdb-catalog.service';
 
 const testSigningSecret = 'catalog-e2e-test-signing-secret';
@@ -382,6 +383,8 @@ function providerMovieDetail(id: number, overrides: Record<string, unknown> = {}
     ...providerMovie(id),
     runtime: 121,
     genres: [{ name: 'Drama' }, { name: 'Crime' }],
+    backdrop_path: null,
+    original_language: 'en',
     ...overrides,
   };
 }
@@ -390,6 +393,12 @@ const invalidProviderMovieIdResponse = {
   statusCode: 400,
   error: 'Bad Request',
   message: 'providerMovieId must be a positive 32-bit integer',
+};
+
+const unschedulableSelectionResponse = {
+  statusCode: 422,
+  error: 'Unprocessable Entity',
+  message: 'Selected movie must have a positive runtime',
 };
 
 describe('GET /catalog/movies/:providerMovieId', () => {
@@ -568,5 +577,180 @@ describe('GET /catalog/movies/:providerMovieId', () => {
       .set('Authorization', `Bearer ${organizerToken()}`)
       .expect(502)
       .expect(providerUnavailableResponse);
+  });
+});
+
+describe('POST /catalog/movies/:providerMovieId/selection', () => {
+  const originalAuthJwtSecret = process.env.AUTH_JWT_SECRET;
+  const originalTmdbApiKey = process.env.TMDB_API_KEY;
+  const originalContentSelectionSecret = process.env.CONTENT_SELECTION_SECRET;
+  let app: INestApplication;
+  let moduleRef: TestingModule;
+  let tmdbFetch: ReturnType<typeof vi.fn<TmdbFetch>>;
+
+  beforeAll(async () => {
+    process.env.AUTH_JWT_SECRET = testSigningSecret;
+    process.env.TMDB_API_KEY = tmdbApiKey;
+    process.env.CONTENT_SELECTION_SECRET = 'catalog-selection-e2e-secret';
+    tmdbFetch = vi.fn<TmdbFetch>().mockResolvedValue(jsonResponse(providerMovieDetail(550)));
+    moduleRef = await Test.createTestingModule({ imports: [AppModule] })
+      .overrideProvider(TMDB_FETCH)
+      .useValue(tmdbFetch)
+      .overrideProvider(CONTENT_SELECTION_CLOCK)
+      .useValue(() => new Date('2030-01-01T00:00:00.000Z'))
+      .compile();
+    app = moduleRef.createNestApplication();
+    await app.init();
+  });
+
+  afterAll(async () => {
+    try {
+      await app?.close();
+      await moduleRef?.close();
+    } finally {
+      if (originalAuthJwtSecret === undefined) delete process.env.AUTH_JWT_SECRET;
+      else process.env.AUTH_JWT_SECRET = originalAuthJwtSecret;
+      if (originalTmdbApiKey === undefined) delete process.env.TMDB_API_KEY;
+      else process.env.TMDB_API_KEY = originalTmdbApiKey;
+      if (originalContentSelectionSecret === undefined) delete process.env.CONTENT_SELECTION_SECRET;
+      else process.env.CONTENT_SELECTION_SECRET = originalContentSelectionSecret;
+    }
+  });
+
+  it('AC-1 issues one normalized selection with the exact response, fixed provider request, and five-second timeout', async () => {
+    const detail = providerMovieDetail(550, { backdrop_path: '/backdrop.jpg', original_language: 'en' });
+    tmdbFetch.mockReset();
+    tmdbFetch.mockResolvedValueOnce(jsonResponse(detail));
+    const timeoutSpy = vi.spyOn(AbortSignal, 'timeout');
+
+    try {
+      const response = await request(app.getHttpServer())
+        .post('/catalog/movies/550/selection')
+        .query({ language: 'en-US', region: 'US', include_adult: 'true', api_key: 'leak' })
+        .set('Authorization', `Bearer ${organizerToken()}`)
+        .expect(200);
+
+      expect(response.body).toEqual({ selectionToken: expect.any(String), expiresIn: 1800 });
+      expect(response.body.selectionToken).not.toHaveLength(0);
+      expect(JSON.parse(Buffer.from(response.body.selectionToken.split('.')[1], 'base64url').toString('utf8'))).toEqual({
+        providerMovieId: 550,
+        title: detail.title,
+        releaseDate: detail.release_date,
+        posterPath: detail.poster_path,
+        backdropPath: detail.backdrop_path,
+        overview: detail.overview,
+        runtimeMinutes: detail.runtime,
+        genres: detail.genres.map(({ name }) => name),
+        originalLanguage: detail.original_language,
+        version: 1,
+        issuedAt: 1_893_456_000,
+        expiresAt: 1_893_457_800,
+      });
+      expect(timeoutSpy).toHaveBeenCalledWith(5000);
+    } finally {
+      timeoutSpy.mockRestore();
+    }
+
+    expect(tmdbFetch).toHaveBeenCalledTimes(1);
+    const [input, init] = tmdbFetch.mock.calls[0];
+    const url = new URL(String(input));
+    expect(`${url.origin}${url.pathname}`).toBe('https://api.themoviedb.org/3/movie/550');
+    expect(Object.fromEntries(url.searchParams)).toEqual({
+      api_key: tmdbApiKey,
+      language: 'pt-BR',
+      region: 'BR',
+      include_adult: 'false',
+    });
+    expect(init?.method).toBe('GET');
+    expect(init?.signal).toBeInstanceOf(AbortSignal);
+  });
+
+  it.each([
+    ['runtime is null', providerMovieDetail(550, { runtime: null, backdrop_path: null, original_language: 'en' })],
+    ['runtime is zero', providerMovieDetail(550, { runtime: 0, backdrop_path: null, original_language: 'en' })],
+  ])('AC-4 returns the exact unschedulable response when %s', async (_description, detail) => {
+    tmdbFetch.mockReset();
+    tmdbFetch.mockResolvedValueOnce(jsonResponse(detail));
+
+    const response = await request(app.getHttpServer())
+      .post('/catalog/movies/550/selection')
+      .set('Authorization', `Bearer ${organizerToken()}`)
+      .expect(422)
+      .expect(unschedulableSelectionResponse);
+
+    expect(response.body).not.toHaveProperty('selectionToken');
+  });
+
+  it.each([
+    ['a timeout', () => Promise.reject(new DOMException('timed out', 'AbortError'))],
+    ['a non-2xx response', () => Promise.resolve(jsonResponse({}, 503))],
+    ['invalid JSON', () => Promise.resolve(new Response('{', { status: 200 }))],
+    ['an ID mismatch', () => Promise.resolve(jsonResponse(providerMovieDetail(551)))],
+    ['adult content', () => Promise.resolve(jsonResponse(providerMovieDetail(550, { adult: true })) )],
+    ['a malformed original language with a valid backdrop path', () => Promise.resolve(jsonResponse(providerMovieDetail(550, { original_language: '', backdrop_path: '/backdrop.jpg' })) )],
+    ['an invalid backdrop path with a valid original language', () => Promise.resolve(jsonResponse(providerMovieDetail(550, { backdrop_path: 4, original_language: 'en' })) )],
+  ])('AC-4 returns the exact unavailable response for %s', async (_description, providerResponse) => {
+    tmdbFetch.mockReset();
+    tmdbFetch.mockImplementationOnce(providerResponse as TmdbFetch);
+
+    await request(app.getHttpServer())
+      .post('/catalog/movies/550/selection')
+      .set('Authorization', `Bearer ${organizerToken()}`)
+      .expect(502)
+      .expect(providerUnavailableResponse);
+  });
+
+  it.each(['abc', '-1', '0', '1.5', '2147483648'])('AC-4 rejects invalid provider IDs and does not call TMDB_FETCH: %s', async (id) => {
+    tmdbFetch.mockClear();
+    await request(app.getHttpServer())
+      .post(`/catalog/movies/${id}/selection`)
+      .set('Authorization', `Bearer ${organizerToken()}`)
+      .expect(400)
+      .expect(invalidProviderMovieIdResponse);
+    expect(tmdbFetch).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['a missing token', undefined, unauthorizedResponse],
+    ['an invalid token', 'Bearer invalid', unauthorizedResponse],
+    ['a CUSTOMER token', `Bearer ${organizerToken(Role.CUSTOMER)}`, forbiddenResponse],
+    ['a GATE token', `Bearer ${organizerToken(Role.GATE)}`, forbiddenResponse],
+  ])('AC-4 returns the exact access denial for %s without calling TMDB_FETCH', async (_description, authorization, expectedResponse) => {
+    tmdbFetch.mockClear();
+    const response = request(app.getHttpServer()).post('/catalog/movies/550/selection');
+    if (authorization !== undefined) response.set('Authorization', authorization);
+    await response.expect(expectedResponse.statusCode).expect(expectedResponse);
+    expect(tmdbFetch).not.toHaveBeenCalled();
+  });
+
+  it('AC-5 keeps the T-009 detail response at exactly seven public keys with no selection fields', async () => {
+    tmdbFetch.mockReset();
+    tmdbFetch.mockResolvedValueOnce(jsonResponse(providerMovieDetail(550)));
+    const response = await request(app.getHttpServer())
+      .get('/catalog/movies/550')
+      .set('Authorization', `Bearer ${organizerToken()}`)
+      .expect(200);
+
+    expect(Object.keys(response.body).sort()).toEqual([
+      'genres', 'overview', 'posterPath', 'providerMovieId', 'releaseDate', 'runtimeMinutes', 'title',
+    ]);
+    expect(response.body).not.toHaveProperty('selectionToken');
+    expect(response.body).not.toHaveProperty('expiresIn');
+    expect(response.body).not.toHaveProperty('backdropPath');
+    expect(response.body).not.toHaveProperty('originalLanguage');
+  });
+
+  it.each([undefined, '', '   '])('AC-5 rejects AppModule construction when CONTENT_SELECTION_SECRET is %j', async (selectionSecret) => {
+    const previousSecret = process.env.CONTENT_SELECTION_SECRET;
+    try {
+      if (selectionSecret === undefined) delete process.env.CONTENT_SELECTION_SECRET;
+      else process.env.CONTENT_SELECTION_SECRET = selectionSecret;
+      await expect(Test.createTestingModule({ imports: [AppModule] }).compile()).rejects.toThrowError(
+        new Error('CONTENT_SELECTION_SECRET is required'),
+      );
+    } finally {
+      if (previousSecret === undefined) delete process.env.CONTENT_SELECTION_SECRET;
+      else process.env.CONTENT_SELECTION_SECRET = previousSecret;
+    }
   });
 });

@@ -5,6 +5,7 @@ import { resolve } from 'node:path';
 export const DEDICATED_TEST_DATABASE_URL =
   'postgresql://elite_test:elite_test_password@127.0.0.1:5434/elite_ticketing_test?schema=public';
 export const DEDICATED_TEST_TMDB_API_KEY = 'test-only-inert-tmdb-key';
+export const DEDICATED_TEST_CONTENT_SELECTION_SECRET = 'test-only-inert-content-selection-secret';
 
 const refusalMessage =
   'Refusing database test access: DATABASE_URL is not the dedicated Docker test database';
@@ -46,10 +47,15 @@ export function assertDedicatedTestDatabaseUrl(databaseUrl) {
 }
 
 export async function runWithDisposableTestDatabase(runCommand = commandRunner) {
-  const testEnvironment = {
+  const migrationEnvironment = {
     ...process.env,
     DATABASE_URL: DEDICATED_TEST_DATABASE_URL,
     TMDB_API_KEY: DEDICATED_TEST_TMDB_API_KEY,
+  };
+  delete migrationEnvironment.CONTENT_SELECTION_SECRET;
+  const testEnvironment = {
+    ...migrationEnvironment,
+    CONTENT_SELECTION_SECRET: DEDICATED_TEST_CONTENT_SELECTION_SECRET,
   };
   let exitCode = 1;
 
@@ -71,7 +77,7 @@ export async function runWithDisposableTestDatabase(runCommand = commandRunner) 
         const migrationExitCode = await runCommand({
           command: 'pnpm',
           args: ['--dir', 'apps/api', 'exec', 'prisma', 'migrate', 'deploy'],
-          env: testEnvironment,
+          env: migrationEnvironment,
         });
         if (migrationExitCode !== 0) {
           exitCode = migrationExitCode || 1;
