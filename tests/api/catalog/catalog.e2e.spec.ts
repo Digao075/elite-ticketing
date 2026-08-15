@@ -241,3 +241,138 @@ describe('GET /catalog/movies', () => {
     }
   });
 });
+
+describe('GET /catalog/movies/popular', () => {
+  const originalAuthJwtSecret = process.env.AUTH_JWT_SECRET;
+  const originalTmdbApiKey = process.env.TMDB_API_KEY;
+  let app: INestApplication;
+  let moduleRef: TestingModule;
+  let tmdbFetch: ReturnType<typeof vi.fn<TmdbFetch>>;
+
+  beforeAll(async () => {
+    process.env.AUTH_JWT_SECRET = testSigningSecret;
+    process.env.TMDB_API_KEY = tmdbApiKey;
+    tmdbFetch = vi.fn<TmdbFetch>().mockResolvedValue(jsonResponse({ results: [] }));
+    moduleRef = await Test.createTestingModule({ imports: [AppModule] })
+      .overrideProvider(TMDB_FETCH)
+      .useValue(tmdbFetch)
+      .compile();
+    app = moduleRef.createNestApplication();
+    await app.init();
+  });
+
+  afterAll(async () => {
+    try {
+      await app?.close();
+      await moduleRef?.close();
+    } finally {
+      if (originalAuthJwtSecret === undefined) delete process.env.AUTH_JWT_SECRET;
+      else process.env.AUTH_JWT_SECRET = originalAuthJwtSecret;
+      if (originalTmdbApiKey === undefined) delete process.env.TMDB_API_KEY;
+      else process.env.TMDB_API_KEY = originalTmdbApiKey;
+    }
+  });
+
+  it('AC-1 returns exactly the first ten popular summaries in provider order with T-007 mapping and null preservation', async () => {
+    const results = Array.from({ length: 12 }, (_, index) =>
+      providerMovie(index + 1, index === 1 ? { release_date: null, poster_path: null } : {}),
+    );
+    tmdbFetch.mockReset();
+    tmdbFetch.mockResolvedValueOnce(jsonResponse({ results }));
+
+    const response = await request(app.getHttpServer())
+      .get('/catalog/movies/popular')
+      .set('Authorization', `Bearer ${organizerToken()}`)
+      .expect(200);
+
+    expect(response.body).toEqual(
+      results.slice(0, 10).map(({ id, title, release_date, poster_path, overview }) => ({
+        providerMovieId: id,
+        title,
+        releaseDate: release_date,
+        posterPath: poster_path,
+        overview,
+      })),
+    );
+    expect(response.body.every((movie: unknown) => Object.keys(movie as object).sort().join(',') === 'overview,posterPath,providerMovieId,releaseDate,title')).toBe(true);
+  });
+
+  it('AC-2 makes one fixed popular request, ignores caller query parameters, excludes adult results, and then limits to ten', async () => {
+    const eligibleResults = Array.from({ length: 10 }, (_, index) => providerMovie(index + 1));
+    const results = [providerMovie(999, { adult: true }), ...eligibleResults, providerMovie(1000)];
+    tmdbFetch.mockReset();
+    tmdbFetch.mockResolvedValueOnce(jsonResponse({ results }));
+    const timeoutSpy = vi.spyOn(AbortSignal, 'timeout');
+
+    try {
+      const response = await request(app.getHttpServer())
+        .get('/catalog/movies/popular')
+        .query({ page: '9', language: 'en-US', region: 'US', include_adult: 'true', api_key: 'leak', limit: '99', query: 'ignored' })
+        .set('Authorization', `Bearer ${organizerToken()}`)
+        .expect(200);
+
+      expect(response.body).toEqual(
+        eligibleResults.map(({ id, title, release_date, poster_path, overview }) => ({
+          providerMovieId: id,
+          title,
+          releaseDate: release_date,
+          posterPath: poster_path,
+          overview,
+        })),
+      );
+      expect(timeoutSpy).toHaveBeenCalledWith(5000);
+    } finally {
+      timeoutSpy.mockRestore();
+    }
+
+    expect(tmdbFetch).toHaveBeenCalledTimes(1);
+    const [input, init] = tmdbFetch.mock.calls[0];
+    const url = new URL(String(input));
+    expect(`${url.origin}${url.pathname}`).toBe('https://api.themoviedb.org/3/movie/popular');
+    expect(Object.fromEntries(url.searchParams)).toEqual({
+      api_key: tmdbApiKey,
+      language: 'pt-BR',
+      region: 'BR',
+      page: '1',
+    });
+    expect(init?.method).toBe('GET');
+    expect(init?.signal).toBeInstanceOf(AbortSignal);
+    expect(TMDB_HTTP_TIMEOUT_MS).toBe(5000);
+  });
+
+  it.each([
+    ['a missing bearer token', undefined, unauthorizedResponse],
+    ['an invalid bearer token', 'Bearer invalid', unauthorizedResponse],
+    ['a CUSTOMER token', `Bearer ${organizerToken(Role.CUSTOMER)}`, forbiddenResponse],
+    ['a GATE token', `Bearer ${organizerToken(Role.GATE)}`, forbiddenResponse],
+  ])('AC-3 preserves the exact access response for %s and does not call TMDB_FETCH', async (_description, authorization, expectedResponse) => {
+    tmdbFetch.mockClear();
+    const response = request(app.getHttpServer()).get('/catalog/movies/popular');
+    if (authorization !== undefined) response.set('Authorization', authorization);
+
+    await response.expect(expectedResponse.statusCode).expect(expectedResponse);
+    expect(tmdbFetch).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['a provider timeout', () => Promise.reject(new DOMException('timed out', 'AbortError'))],
+    ['a non-success provider response', () => Promise.resolve(jsonResponse({ status_message: 'secret provider failure' }, 503))],
+    ['invalid JSON', () => Promise.resolve(new Response('{', { status: 200, headers: { 'content-type': 'application/json' } }))],
+    ['a non-object body', () => Promise.resolve(jsonResponse([]))],
+    ['a missing results field', () => Promise.resolve(jsonResponse({}))],
+    ['a non-array results field', () => Promise.resolve(jsonResponse({ results: {} }))],
+    ['a missing adult field', () => Promise.resolve(jsonResponse({ results: [providerMovie(1, { adult: undefined })] }))],
+    ['a non-boolean adult field', () => Promise.resolve(jsonResponse({ results: [providerMovie(1, { adult: 'false' })] }))],
+    ['an invalid required summary field in the first ten eligible results', () =>
+      Promise.resolve(jsonResponse({ results: [providerMovie(1, { title: 8 })] }))],
+  ])('AC-4 returns the exact provider-unavailable response without provider data for %s', async (_description, providerResponse) => {
+    tmdbFetch.mockReset();
+    tmdbFetch.mockImplementationOnce(providerResponse as TmdbFetch);
+
+    await request(app.getHttpServer())
+      .get('/catalog/movies/popular')
+      .set('Authorization', `Bearer ${organizerToken()}`)
+      .expect(502)
+      .expect(providerUnavailableResponse);
+  });
+});

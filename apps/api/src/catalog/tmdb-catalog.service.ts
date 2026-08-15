@@ -63,6 +63,30 @@ export class TmdbCatalogService {
     }
   }
 
+  async listPopularMovies(): Promise<CatalogMovieSummary[]> {
+    const url = new URL('https://api.themoviedb.org/3/movie/popular');
+    url.search = new URLSearchParams({
+      api_key: this.apiKey,
+      language: 'pt-BR',
+      region: 'BR',
+      page: '1',
+    }).toString();
+
+    try {
+      const response = await this.tmdbFetch(url, {
+        method: 'GET',
+        signal: AbortSignal.timeout(TMDB_HTTP_TIMEOUT_MS),
+      });
+      if (!response.ok) {
+        throw new Error('TMDb returned an unsuccessful response');
+      }
+
+      return this.normalizeSearchPayload(await response.json());
+    } catch {
+      throw new BadGatewayException(PROVIDER_UNAVAILABLE_MESSAGE);
+    }
+  }
+
   private normalizeSearchPayload(payload: unknown): CatalogMovieSummary[] {
     if (!this.isRecord(payload) || !Array.isArray(payload.results)) {
       throw new Error('Invalid TMDb search payload');

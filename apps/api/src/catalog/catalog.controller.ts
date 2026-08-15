@@ -27,4 +27,9 @@ export class CatalogController {
 
     return this.tmdbCatalogService.searchMovies(trimmedQuery);
   }
+
+  @Get('movies/popular')
+  listPopularMovies(): Promise<CatalogMovieSummary[]> {
+    return this.tmdbCatalogService.listPopularMovies();
+  }
 }
