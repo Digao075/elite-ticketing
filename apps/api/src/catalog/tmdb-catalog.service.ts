@@ -13,6 +13,11 @@ export type CatalogMovieSummary = {
   overview: string;
 };
 
+export type CatalogMovieDetail = CatalogMovieSummary & {
+  runtimeMinutes: number | null;
+  genres: string[];
+};
+
 type TmdbMovie = {
   id: number;
   title: string;
@@ -20,6 +25,11 @@ type TmdbMovie = {
   poster_path: string | null;
   overview: string;
   adult: boolean;
+};
+
+type TmdbMovieDetail = TmdbMovie & {
+  runtime: number | null;
+  genres: { name: string }[];
 };
 
 const PROVIDER_UNAVAILABLE_MESSAGE = 'Catalog provider unavailable';
@@ -87,6 +97,30 @@ export class TmdbCatalogService {
     }
   }
 
+  async getMovieDetails(providerMovieId: number): Promise<CatalogMovieDetail> {
+    const url = new URL(`https://api.themoviedb.org/3/movie/${providerMovieId}`);
+    url.search = new URLSearchParams({
+      api_key: this.apiKey,
+      language: 'pt-BR',
+      region: 'BR',
+      include_adult: 'false',
+    }).toString();
+
+    try {
+      const response = await this.tmdbFetch(url, {
+        method: 'GET',
+        signal: AbortSignal.timeout(TMDB_HTTP_TIMEOUT_MS),
+      });
+      if (!response.ok) {
+        throw new Error('TMDb returned an unsuccessful response');
+      }
+
+      return this.normalizeDetailPayload(await response.json(), providerMovieId);
+    } catch {
+      throw new BadGatewayException(PROVIDER_UNAVAILABLE_MESSAGE);
+    }
+  }
+
   private normalizeSearchPayload(payload: unknown): CatalogMovieSummary[] {
     if (!this.isRecord(payload) || !Array.isArray(payload.results)) {
       throw new Error('Invalid TMDb search payload');
@@ -129,6 +163,33 @@ export class TmdbCatalogService {
     }
 
     return candidate as TmdbMovie;
+  }
+
+  private normalizeDetailPayload(payload: unknown, providerMovieId: number): CatalogMovieDetail {
+    const movie = this.validateMovie(payload);
+    if (
+      movie.id !== providerMovieId ||
+      movie.adult !== false ||
+      (((movie as TmdbMovieDetail).runtime !== null && !Number.isInteger((movie as TmdbMovieDetail).runtime)) ||
+        ((movie as TmdbMovieDetail).runtime !== null && (movie as TmdbMovieDetail).runtime < 0)) ||
+      !Array.isArray((movie as TmdbMovieDetail).genres) ||
+      !(movie as TmdbMovieDetail).genres.every(
+        (genre) => this.isRecord(genre) && typeof genre.name === 'string' && genre.name.length > 0,
+      )
+    ) {
+      throw new Error('Invalid TMDb movie detail');
+    }
+
+    const detail = movie as TmdbMovieDetail;
+    return {
+      providerMovieId: detail.id,
+      title: detail.title,
+      releaseDate: detail.release_date,
+      posterPath: detail.poster_path,
+      overview: detail.overview,
+      runtimeMinutes: detail.runtime,
+      genres: detail.genres.map((genre) => genre.name),
+    };
   }
 
   private isRecord(value: unknown): value is Record<string, unknown> {

@@ -376,3 +376,197 @@ describe('GET /catalog/movies/popular', () => {
       .expect(providerUnavailableResponse);
   });
 });
+
+function providerMovieDetail(id: number, overrides: Record<string, unknown> = {}) {
+  return {
+    ...providerMovie(id),
+    runtime: 121,
+    genres: [{ name: 'Drama' }, { name: 'Crime' }],
+    ...overrides,
+  };
+}
+
+const invalidProviderMovieIdResponse = {
+  statusCode: 400,
+  error: 'Bad Request',
+  message: 'providerMovieId must be a positive 32-bit integer',
+};
+
+describe('GET /catalog/movies/:providerMovieId', () => {
+  const originalAuthJwtSecret = process.env.AUTH_JWT_SECRET;
+  const originalTmdbApiKey = process.env.TMDB_API_KEY;
+  let app: INestApplication;
+  let moduleRef: TestingModule;
+  let tmdbFetch: ReturnType<typeof vi.fn<TmdbFetch>>;
+
+  beforeAll(async () => {
+    process.env.AUTH_JWT_SECRET = testSigningSecret;
+    process.env.TMDB_API_KEY = tmdbApiKey;
+    tmdbFetch = vi.fn<TmdbFetch>().mockResolvedValue(jsonResponse(providerMovieDetail(550)));
+    moduleRef = await Test.createTestingModule({ imports: [AppModule] })
+      .overrideProvider(TMDB_FETCH)
+      .useValue(tmdbFetch)
+      .compile();
+    app = moduleRef.createNestApplication();
+    await app.init();
+  });
+
+  afterAll(async () => {
+    try {
+      await app?.close();
+      await moduleRef?.close();
+    } finally {
+      if (originalAuthJwtSecret === undefined) delete process.env.AUTH_JWT_SECRET;
+      else process.env.AUTH_JWT_SECRET = originalAuthJwtSecret;
+      if (originalTmdbApiKey === undefined) delete process.env.TMDB_API_KEY;
+      else process.env.TMDB_API_KEY = originalTmdbApiKey;
+    }
+  });
+
+  it('AC-1 returns exactly the canonical detail DTO in provider genre order', async () => {
+    const detail = providerMovieDetail(550, { release_date: null, poster_path: null, runtime: null });
+    tmdbFetch.mockReset();
+    tmdbFetch.mockResolvedValueOnce(jsonResponse(detail));
+
+    const response = await request(app.getHttpServer())
+      .get('/catalog/movies/550')
+      .set('Authorization', `Bearer ${organizerToken()}`)
+      .expect(200);
+
+    expect(response.body).toEqual({
+      providerMovieId: 550,
+      title: detail.title,
+      releaseDate: null,
+      posterPath: null,
+      overview: detail.overview,
+      runtimeMinutes: null,
+      genres: ['Drama', 'Crime'],
+    });
+    expect(Object.keys(response.body).sort()).toEqual([
+      'genres',
+      'overview',
+      'posterPath',
+      'providerMovieId',
+      'releaseDate',
+      'runtimeMinutes',
+      'title',
+    ]);
+  });
+
+  it('AC-1 preserves zero runtime and an empty provider genres array', async () => {
+    tmdbFetch.mockReset();
+    tmdbFetch.mockResolvedValueOnce(jsonResponse(providerMovieDetail(1, { runtime: 0, genres: [] })));
+
+    await request(app.getHttpServer())
+      .get('/catalog/movies/1')
+      .set('Authorization', `Bearer ${organizerToken()}`)
+      .expect(200)
+      .expect({
+        providerMovieId: 1,
+        title: 'Movie 1',
+        releaseDate: '2002-08-30',
+        posterPath: '/poster-1.jpg',
+        overview: 'Overview 1',
+        runtimeMinutes: 0,
+        genres: [],
+      });
+  });
+
+  it.each([
+    ['non-decimal text', 'abc'],
+    ['a decimal point', '1.5'],
+    ['a sign', '-1'],
+    ['zero', '0'],
+    ['a value above the signed 32-bit maximum', '2147483648'],
+  ])('AC-2 returns the exact invalid-ID response for %s without calling TMDB_FETCH', async (_description, providerMovieId) => {
+    tmdbFetch.mockClear();
+
+    await request(app.getHttpServer())
+      .get(`/catalog/movies/${providerMovieId}`)
+      .set('Authorization', `Bearer ${organizerToken()}`)
+      .expect(400)
+      .expect(invalidProviderMovieIdResponse);
+    expect(tmdbFetch).not.toHaveBeenCalled();
+  });
+
+  it('AC-2 keeps movies/popular on the T-008 handler rather than detail validation', async () => {
+    tmdbFetch.mockReset();
+    tmdbFetch.mockResolvedValueOnce(jsonResponse({ results: [] }));
+
+    await request(app.getHttpServer())
+      .get('/catalog/movies/popular')
+      .set('Authorization', `Bearer ${organizerToken()}`)
+      .expect(200)
+      .expect([]);
+    expect(tmdbFetch).toHaveBeenCalledTimes(1);
+    expect(new URL(String(tmdbFetch.mock.calls[0][0])).pathname).toBe('/3/movie/popular');
+  });
+
+  it('AC-3 makes one fixed detail request with an exact 5000 ms abort signal and ignores caller overrides', async () => {
+    tmdbFetch.mockReset();
+    tmdbFetch.mockResolvedValueOnce(jsonResponse(providerMovieDetail(2147483647)));
+    const timeoutSpy = vi.spyOn(AbortSignal, 'timeout');
+
+    try {
+      await request(app.getHttpServer())
+        .get('/catalog/movies/2147483647')
+        .query({ language: 'en-US', region: 'US', include_adult: 'true', api_key: 'leak' })
+        .set('Authorization', `Bearer ${organizerToken()}`)
+        .expect(200);
+      expect(timeoutSpy).toHaveBeenCalledWith(5000);
+    } finally {
+      timeoutSpy.mockRestore();
+    }
+
+    expect(tmdbFetch).toHaveBeenCalledTimes(1);
+    const [input, init] = tmdbFetch.mock.calls[0];
+    const url = new URL(String(input));
+    expect(`${url.origin}${url.pathname}`).toBe('https://api.themoviedb.org/3/movie/2147483647');
+    expect(Object.fromEntries(url.searchParams)).toEqual({
+      api_key: tmdbApiKey,
+      language: 'pt-BR',
+      region: 'BR',
+      include_adult: 'false',
+    });
+    expect(init?.method).toBe('GET');
+    expect(init?.signal).toBeInstanceOf(AbortSignal);
+    expect(TMDB_HTTP_TIMEOUT_MS).toBe(5000);
+  });
+
+  it.each([
+    ['a missing bearer token', undefined, unauthorizedResponse],
+    ['an invalid bearer token', 'Bearer invalid', unauthorizedResponse],
+    ['a CUSTOMER token', `Bearer ${organizerToken(Role.CUSTOMER)}`, forbiddenResponse],
+    ['a GATE token', `Bearer ${organizerToken(Role.GATE)}`, forbiddenResponse],
+  ])('AC-4 returns the exact denied response for %s without calling TMDB_FETCH', async (_description, authorization, expectedResponse) => {
+    tmdbFetch.mockClear();
+    const response = request(app.getHttpServer()).get('/catalog/movies/550');
+    if (authorization !== undefined) response.set('Authorization', authorization);
+
+    await response.expect(expectedResponse.statusCode).expect(expectedResponse);
+    expect(tmdbFetch).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['a timeout', () => Promise.reject(new DOMException('timed out', 'AbortError'))],
+    ['a non-2xx provider response', () => Promise.resolve(jsonResponse({ status_message: 'provider secret' }, 503))],
+    ['invalid JSON', () => Promise.resolve(new Response('{', { status: 200, headers: { 'content-type': 'application/json' } }))],
+    ['a non-object response body', () => Promise.resolve(jsonResponse([]))],
+    ['an ID mismatch', () => Promise.resolve(jsonResponse(providerMovieDetail(551)))],
+    ['adult set to true', () => Promise.resolve(jsonResponse(providerMovieDetail(550, { adult: true })))],
+    ['a missing title', () => Promise.resolve(jsonResponse(providerMovieDetail(550, { title: undefined })))],
+    ['a non-string release date', () => Promise.resolve(jsonResponse(providerMovieDetail(550, { release_date: 7 })))],
+    ['a negative runtime', () => Promise.resolve(jsonResponse(providerMovieDetail(550, { runtime: -1 })))],
+    ['a non-integer runtime', () => Promise.resolve(jsonResponse(providerMovieDetail(550, { runtime: 1.5 })))],
+    ['a genre without a non-empty name', () => Promise.resolve(jsonResponse(providerMovieDetail(550, { genres: [{ name: '' }] })))],
+  ])('AC-5 returns the exact provider-unavailable response without provider data for %s', async (_description, providerResponse) => {
+    tmdbFetch.mockReset();
+    tmdbFetch.mockImplementationOnce(providerResponse as TmdbFetch);
+
+    await request(app.getHttpServer())
+      .get('/catalog/movies/550')
+      .set('Authorization', `Bearer ${organizerToken()}`)
+      .expect(502)
+      .expect(providerUnavailableResponse);
+  });
+});
