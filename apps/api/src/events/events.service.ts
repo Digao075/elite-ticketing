@@ -1,4 +1,4 @@
-import { BadRequestException, ConflictException, Inject, Injectable, UnauthorizedException } from '@nestjs/common';
+import { BadRequestException, ConflictException, Inject, Injectable, NotFoundException, UnauthorizedException } from '@nestjs/common';
 import type { Event } from '@prisma/client';
 
 import { ContentSelectionTokenService, type EventContentSelection } from '../catalog/content-selection-token.service';
@@ -22,6 +22,12 @@ const FIELDS = ['providerMovieId', 'selectionToken', 'startsAt', 'venueName', 'a
 @Injectable()
 export class EventsService {
   constructor(private readonly prisma: PrismaService, private readonly selections: ContentSelectionTokenService, @Inject(EVENTS_CLOCK) private readonly clock: EventsClock) {}
+
+  async findOwnedById(organizerId: string, eventId: string): Promise<EventDto> {
+    const event = await this.prisma.event.findFirst({ where: { id: eventId, organizerId } });
+    if (!event) throw new NotFoundException('Event not found');
+    return this.dto(event);
+  }
 
   async createDraft(input: { organizerId: string; idempotencyKey: unknown; body: CreateEventBody }): Promise<EventDto> {
     if (!await this.prisma.user.findUnique({ where: { id: input.organizerId } })) throw new UnauthorizedException(INVALID_ACCESS);
