@@ -1,11 +1,15 @@
 node_modules/
 .pnpm-store/
-.pipeline/
 dist/
 coverage/
+*.tsbuildinfo
+*.log
+
+# Local environment. Only the example is versioned.
 .env
 .env.*
 !.env.example
-*.tsbuildinfo
-*.log
-""
+
+# Raw workflow artefacts live in the tooling repository.
+# The curated record is docs/PROCESS.md and docs/adr/.
+.pipeline/
