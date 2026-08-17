@@ -1,29 +1,11 @@
 @import "tailwindcss";
 
 :root {
-  color: #f7f4ed;
-  background: #111111;
-  font-family: Arial, sans-serif;
+  color-scheme: dark;
+  font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Arial, sans-serif;
 }
 
 body {
   margin: 0;
-}
-
-.foundation-page {
-  display: grid;
-  min-height: 100vh;
-  align-content: center;
-  gap: 0.75rem;
-  max-width: 48rem;
-  margin: 0 auto;
-  padding: 2rem;
-}
-
-.foundation-page__eyebrow {
-  color: #e8c547;
-  font-size: 0.875rem;
-  font-weight: 700;
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
+  background: #0c0a09;
 }
