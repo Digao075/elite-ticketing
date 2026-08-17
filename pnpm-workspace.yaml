@@ -1,2 +1,11 @@
 packages:
   - apps/*
+
+# Pinned so a fresh clone runs the build scripts these packages need.
+# Without this, pnpm 10+ skips them and Prisma Client is never generated,
+# which makes the documented setup steps fail on a reviewer's machine.
+allowBuilds:
+  '@prisma/client': true
+  '@prisma/engines': true
+  argon2: true
+  prisma: true

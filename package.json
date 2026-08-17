@@ -6,17 +6,21 @@
   "scripts": {
     "dev": "pnpm --parallel --filter @elite-ticketing/api --filter @elite-ticketing/web dev",
     "build": "pnpm -r --if-present build",
-    "test": "node scripts/run-tests.mjs",
+    "test": "pnpm typecheck && node scripts/run-tests.mjs",
     "test:api": "pnpm --filter @elite-ticketing/api test",
     "test:web": "pnpm --filter @elite-ticketing/web test",
     "db:up": "docker compose up -d db",
-    "db:down": "docker compose down"
+    "db:down": "docker compose down",
+    "typecheck": "pnpm -r --if-present typecheck",
+    "db:seed": "pnpm --dir apps/api exec ts-node --transpile-only prisma/seed.ts",
+    "db:migrate": "pnpm --dir apps/api exec prisma migrate deploy"
   },
   "devDependencies": {
     "@testing-library/jest-dom": "^7.0.1",
     "@testing-library/react": "^16.3.2",
     "jsdom": "^30.0.1",
     "react": "^19.2.8",
-    "react-dom": "^19.2.8"
+    "react-dom": "^19.2.8",
+    "react-router-dom": "^7.18.2"
   }
 }
