@@ -18,6 +18,12 @@ enum EventStatus {
   PUBLISHED
 }
 
+enum ReservationStatus {
+  PENDING
+  PAID
+  DECLINED
+}
+
 model User {
   id           String   @id @default(uuid()) @db.Uuid
   email        String   @unique
@@ -26,6 +32,7 @@ model User {
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
   events       Event[]
+  reservations Reservation[]
 }
 
 model Event {
@@ -49,9 +56,71 @@ model Event {
   contentRuntimeMinutes   Int
   contentGenres           String[]
   contentOriginalLanguage String
+  priceCents              Int?
   createdAt               DateTime    @default(now()) @db.Timestamptz(3)
   updatedAt               DateTime    @updatedAt @db.Timestamptz(3)
-  organizer               User        @relation(fields: [organizerId], references: [id], onDelete: Restrict)
+  organizer               User          @relation(fields: [organizerId], references: [id], onDelete: Restrict)
+  seats                   EventSeat[]
+  reservations            Reservation[]
 
   @@unique([organizerId, idempotencyKey], map: "Event_organizerId_idempotencyKey_key")
+}
+
+model EventSeat {
+  id         String           @id @default(uuid()) @db.Uuid
+  eventId    String           @db.Uuid
+  seatLabel  String
+  rowLabel   String
+  seatNumber Int
+  event      Event            @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  allocation SeatAllocation[]
+  ticket     Ticket?
+
+  @@unique([eventId, seatLabel])
+}
+
+model Reservation {
+  id          String            @id @default(uuid()) @db.Uuid
+  eventId     String            @db.Uuid
+  customerId  String            @db.Uuid
+  status      ReservationStatus @default(PENDING)
+  expiresAt   DateTime          @db.Timestamptz(3)
+  createdAt   DateTime          @default(now()) @db.Timestamptz(3)
+  updatedAt   DateTime          @updatedAt @db.Timestamptz(3)
+  event       Event             @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  customer    User              @relation(fields: [customerId], references: [id], onDelete: Restrict)
+  allocations SeatAllocation[]
+  tickets     Ticket[]
+
+  @@index([customerId])
+  @@index([eventId])
+}
+
+/// One live row per seat enforces the single-sale invariant. Releasing sets
+/// releasedAt instead of deleting, so the partial unique index frees the seat
+/// while the attempt stays auditable.
+model SeatAllocation {
+  id            String      @id @default(uuid()) @db.Uuid
+  eventSeatId   String      @db.Uuid
+  reservationId String      @db.Uuid
+  releasedAt    DateTime?   @db.Timestamptz(3)
+  createdAt     DateTime    @default(now()) @db.Timestamptz(3)
+  eventSeat     EventSeat   @relation(fields: [eventSeatId], references: [id], onDelete: Cascade)
+  reservation   Reservation @relation(fields: [reservationId], references: [id], onDelete: Cascade)
+
+  @@index([reservationId])
+  @@index([eventSeatId])
+}
+
+model Ticket {
+  id            String      @id @default(uuid()) @db.Uuid
+  reservationId String      @db.Uuid
+  eventSeatId   String      @unique @db.Uuid
+  shareToken    String      @unique
+  usedAt        DateTime?   @db.Timestamptz(3)
+  createdAt     DateTime    @default(now()) @db.Timestamptz(3)
+  reservation   Reservation @relation(fields: [reservationId], references: [id], onDelete: Cascade)
+  eventSeat     EventSeat   @relation(fields: [eventSeatId], references: [id], onDelete: Cascade)
+
+  @@index([reservationId])
 }

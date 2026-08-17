@@ -6,6 +6,7 @@ export const DEDICATED_TEST_DATABASE_URL =
   'postgresql://elite_test:elite_test_password@127.0.0.1:5434/elite_ticketing_test?schema=public';
 export const DEDICATED_TEST_TMDB_API_KEY = 'test-only-inert-tmdb-key';
 export const DEDICATED_TEST_CONTENT_SELECTION_SECRET = 'test-only-inert-content-selection-secret';
+export const DEDICATED_TEST_TICKET_QR_SECRET = 'test-only-inert-ticket-qr-secret';
 
 const refusalMessage =
   'Refusing database test access: DATABASE_URL is not the dedicated Docker test database';
@@ -56,6 +57,7 @@ export async function runWithDisposableTestDatabase(runCommand = commandRunner) 
   const testEnvironment = {
     ...migrationEnvironment,
     CONTENT_SELECTION_SECRET: DEDICATED_TEST_CONTENT_SELECTION_SECRET,
+    TICKET_QR_SECRET: DEDICATED_TEST_TICKET_QR_SECRET,
   };
   let exitCode = 1;
 
