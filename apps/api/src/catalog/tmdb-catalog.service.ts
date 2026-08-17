@@ -139,11 +139,12 @@ export class TmdbCatalogService {
       throw new BadGatewayException(PROVIDER_UNAVAILABLE_MESSAGE);
     }
 
-    if (detail.runtimeMinutes === null || detail.runtimeMinutes === 0) {
+    const { runtimeMinutes } = detail;
+    if (runtimeMinutes === null || runtimeMinutes === 0) {
       throw new UnprocessableEntityException(UNSCHEDULABLE_SELECTION_MESSAGE);
     }
 
-    return detail;
+    return { ...detail, runtimeMinutes };
   }
 
   private normalizeSearchPayload(payload: unknown): CatalogMovieSummary[] {
@@ -177,7 +178,7 @@ export class TmdbCatalogService {
     if (
       !this.isRecord(candidate) ||
       !Number.isInteger(candidate.id) ||
-      candidate.id <= 0 ||
+      (candidate.id as number) <= 0 ||
       typeof candidate.title !== 'string' ||
       (typeof candidate.release_date !== 'string' && candidate.release_date !== null) ||
       (typeof candidate.poster_path !== 'string' && candidate.poster_path !== null) ||
@@ -191,21 +192,19 @@ export class TmdbCatalogService {
   }
 
   private normalizeDetailPayload(payload: unknown, providerMovieId: number): CatalogMovieDetail {
-    const movie = this.validateMovie(payload);
+    const detail = this.validateMovie(payload) as TmdbMovieDetail;
     if (
-      movie.id !== providerMovieId ||
-      movie.adult !== false ||
-      (((movie as TmdbMovieDetail).runtime !== null && !Number.isInteger((movie as TmdbMovieDetail).runtime)) ||
-        ((movie as TmdbMovieDetail).runtime !== null && (movie as TmdbMovieDetail).runtime < 0)) ||
-      !Array.isArray((movie as TmdbMovieDetail).genres) ||
-      !(movie as TmdbMovieDetail).genres.every(
+      detail.id !== providerMovieId ||
+      detail.adult !== false ||
+      (detail.runtime !== null && (!Number.isInteger(detail.runtime) || detail.runtime < 0)) ||
+      !Array.isArray(detail.genres) ||
+      !detail.genres.every(
         (genre) => this.isRecord(genre) && typeof genre.name === 'string' && genre.name.length > 0,
       )
     ) {
       throw new Error('Invalid TMDb movie detail');
     }
 
-    const detail = movie as TmdbMovieDetail;
     return {
       providerMovieId: detail.id,
       title: detail.title,
