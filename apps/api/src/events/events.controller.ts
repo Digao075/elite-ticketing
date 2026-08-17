@@ -4,6 +4,7 @@ import { Role } from '@prisma/client';
 import type { AuthenticatedRequest } from '../auth/authenticated-principal';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { Roles } from '../auth/roles.decorator';
+import { RequireStoredUser } from '../auth/stored-user.decorator';
 import { RolesGuard } from '../auth/roles.guard';
 import { type CreateEventBody, type EventDto, EventsService } from './events.service';
 
@@ -19,6 +20,7 @@ export class EventsController {
   }
 
   @Get(':eventId')
+  @RequireStoredUser()
   findOwnedById(@Req() request: AuthenticatedRequest, @Param('eventId') eventId: string): Promise<EventDto> {
     if (!UUID.test(eventId)) throw new BadRequestException('eventId must be a UUID');
     return this.eventsService.findOwnedById(request.user.id, eventId);
