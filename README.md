@@ -8,6 +8,39 @@ publicados, escolhe a poltrona, paga de forma simulada e recebe um ingresso com
 QR assinado que pode compartilhar por link. Na entrada, a portaria valida o QR
 pela câmera.
 
+## Avalie em 5 minutos
+
+> **Aplicação publicada:** _<preencher após o deploy>_
+> **Repositório:** https://github.com/Digao075/elite-ticketing
+
+Todos os usuários abaixo usam a senha `Elite@2026`:
+
+| Papel | E-mail |
+|---|---|
+| Cliente | `cliente1@elite.test` |
+| Organizador | `organizador@elite.test` |
+| Portaria | `portaria@elite.test` |
+
+O caminho abaixo percorre o fluxo inteiro e demonstra as duas invariantes que o
+enunciado pede — assento não vendido duas vezes e ingresso não validado duas
+vezes:
+
+1. Abra a home: a sessão **Clube da Luta** aparece com preço e lugares livres.
+2. Entre nela e escolha **dois assentos** no mapa.
+3. Entre como **cliente** e reserve.
+4. No checkout, use **"Simular pagamento recusado"** primeiro. Volte ao evento:
+   **os assentos voltaram para o estoque.**
+5. Reserve de novo e agora **aprove**. Em *Meus ingressos* o QR é exibido.
+6. Saia, entre como **portaria**, cole o código `v1.…` e valide: **`VALID`**.
+   Valide o mesmo código outra vez: **`ALREADY_USED`**.
+
+O passo 6, repetido, é a demonstração mais curta de que o uso único é garantido
+pelo banco e não pela interface.
+
+Rodando localmente, [os comandos estão abaixo](#rodando-localmente). Se algo
+parecer fora do lugar, as [limitações conhecidas](#limitações-conhecidas) estão
+declaradas — nada foi omitido em silêncio.
+
 ## Estado atual
 
 O fluxo de ponta a ponta está implementado e coberto por testes de integração
@@ -23,6 +56,8 @@ sem aviso.
 - Criação de evento idempotente (`Idempotency-Key`), com trava de sala e horário
 - Configuração atômica do mapa de assentos e do preço, com capacidade derivada
 - Publicação do evento, exigindo preço e ao menos um assento
+- Painel com as próprias sessões: status, ingressos vendidos, lugares livres e
+  receita, publicando direto da lista quando o rascunho já está pronto
 
 **Cliente**
 
@@ -50,13 +85,14 @@ sem aviso.
 
 ## Arquitetura
 
-```
-React (Vite)
-    | HTTP/JSON
-NestJS  -> Controller  (HTTP, validação de rota)
-        -> Service     (regras de negócio, transações)
-        -> Prisma      (persistência)
-PostgreSQL  <- invariantes críticas vivem aqui
+```mermaid
+flowchart TD
+    UI["React (Vite)"] -->|HTTP/JSON| C[Controller<br/>rota, autenticação, forma da requisição]
+    C --> S[Service<br/>regras de negócio, transações]
+    S --> P[Prisma]
+    P --> DB[(PostgreSQL)]
+    S -.->|somente o organizador| T[TMDb]
+    DB -.- N["as invariantes críticas<br/>são garantidas aqui"]
 ```
 
 Monólito modular. Cada módulo (`auth`, `catalog`, `events`, `seats`,
@@ -64,6 +100,42 @@ Monólito modular. Cada módulo (`auth`, `catalog`, `events`, `seats`,
 regras e DTOs. O TMDb é acessado **somente** pelo back-end, e o evento guarda um
 snapshot do conteúdo no momento da criação — telas públicas nunca dependem de
 uma chamada externa ao vivo.
+
+### Ciclo de vida de uma reserva
+
+```mermaid
+stateDiagram-v2
+    [*] --> PENDING: cliente escolhe assentos
+    PENDING --> PAID: pagamento aprovado<br/>emite 1 ingresso por assento
+    PENDING --> DECLINED: pagamento recusado<br/>libera os assentos
+    PENDING --> DECLINED: expira em 10 min<br/>recuperada na próxima reserva
+    PAID --> [*]
+    DECLINED --> [*]
+```
+
+O assento é ocupado por uma linha em `SeatAllocation`. Liberar marca
+`releasedAt` em vez de apagar: um índice único **parcial**
+(`WHERE "releasedAt" IS NULL`) garante que exista no máximo uma alocação viva
+por assento, então a segunda venda simultânea é recusada pelo PostgreSQL — e a
+tentativa continua auditável.
+
+### Validação na portaria
+
+```mermaid
+flowchart LR
+    Q[QR lido] --> A{assinatura<br/>confere?}
+    A -->|não| INV[INVALID]
+    A -->|sim| B{ingresso<br/>existe?}
+    B -->|não| INV
+    B -->|sim| C{é desta<br/>sessão?}
+    C -->|não| WE["WRONG_EVENT<br/>(não consome)"]
+    C -->|sim| D["UPDATE ... WHERE usedAt IS NULL"]
+    D -->|1 linha| OK[VALID]
+    D -->|0 linhas| AU[ALREADY_USED]
+```
+
+A checagem de sessão vem **antes** do `UPDATE`: apresentar o ingresso na porta
+errada não pode queimá-lo, ou o portador seria recusado na porta certa.
 
 Detalhes em [docs/architecture.md](docs/architecture.md) e nos
 [ADRs](docs/adr).
@@ -136,6 +208,43 @@ a suíte para dados reais sem querer.
 O comando roda `tsc` antes dos testes de propósito: o Vitest transpila sem
 checar tipos, então uma build quebrada passava despercebida por uma suíte verde.
 
+### Integração contínua
+
+Todo push em `main` e todo pull request rodam
+[`.github/workflows/ci.yml`](.github/workflows/ci.yml): instalação com lockfile
+congelado, `tsc`, a suíte completa contra um PostgreSQL descartável e o build
+das duas aplicações.
+
+O passo de teste é **exatamente o mesmo `pnpm test` que se roda localmente** —
+não uma variação adaptada ao CI. Quando a esteira fica verde, ela afirma a mesma
+coisa que a máquina do desenvolvedor afirma.
+
+A suíte é hermética: nenhum segredo é necessário, porque o runner injeta valores
+de teste inertes e toda chamada externa é dublada.
+
+Não há linter configurado, então não há passo de lint. Isso está registrado como
+lacuna real em [Melhorias futuras](#melhorias-futuras) em vez de disfarçado.
+
+### Verificando as invariantes
+
+As duas garantias centrais são provadas com requisições realmente concorrentes,
+não com mocks. Para conferir só elas:
+
+```bash
+pnpm --dir apps/api exec vitest run ../../tests/api/journey
+```
+
+| O que prova | Teste |
+|---|---|
+| Um assento nunca é vendido duas vezes | `AC-3 never sells one seat twice and reclaims expired holds` |
+| Um ingresso nunca é validado duas vezes | `AC-6 concurrent scans of one unused ticket yield a single VALID` |
+| QR forjado ou adulterado é recusado | `AC-5 and AC-6 reject forged QR codes and consume a ticket exactly once` |
+
+Do lado da interface, `tests/web/journey.test.tsx` cobre o outro lado da mesma
+invariante: quando a API responde `409` porque alguém levou o assento primeiro,
+o mapa relê a disponibilidade em vez de continuar exibindo um lugar que não
+existe mais.
+
 ## API
 
 | Método | Rota | Papel | O que faz |
@@ -148,6 +257,7 @@ checar tipos, então uma build quebrada passava despercebida por uma suíte verd
 | `GET` | `/events/:id` | organizador | Evento próprio |
 | `PUT` | `/events/:id/seats` | organizador | Assentos e preço |
 | `POST` | `/events/:id/publish` | organizador | Publica |
+| `GET` | `/organizer/events` | organizador | Painel: sessões próprias com vendas |
 | `GET` | `/events` | **público** | Eventos publicados |
 | `GET` | `/events/:id/public` | **público** | Detalhe com disponibilidade |
 | `POST` | `/reservations` | cliente | Reserva assentos |
@@ -155,6 +265,58 @@ checar tipos, então uma build quebrada passava despercebida por uma suíte verd
 | `GET` | `/tickets/me` | cliente | Meus ingressos |
 | `GET` | `/tickets/shared/:token` | **público** | Ingresso compartilhado |
 | `POST` | `/gate/validations` | portaria | Valida o QR |
+
+## Deploy
+
+A aplicação roda em três serviços gerenciados: banco no **Neon**, API no
+**Render** e front-end na **Vercel**.
+
+### Banco (Neon)
+
+Use a string de conexão **direta**, não a `-pooler`: as migrations do Prisma não
+funcionam sobre o pooler. Acrescente `?sslmode=require`.
+
+### API (Render)
+
+```text
+Build:        pnpm install --frozen-lockfile
+              && pnpm --filter @elite-ticketing/api exec prisma generate
+              && pnpm --filter @elite-ticketing/api build
+Start:        node apps/api/dist/main
+Pre-deploy:   pnpm db:migrate && pnpm db:seed
+```
+
+Variáveis: `DATABASE_URL`, `TMDB_API_KEY`, `AUTH_JWT_SECRET`,
+`TICKET_QR_SECRET`, `CONTENT_SELECTION_SECRET` e `WEB_ORIGIN` apontando para o
+domínio da Vercel. `WEB_ORIGIN` precisa bater exatamente, senão o navegador
+bloqueia toda requisição por CORS.
+
+A aplicação escuta `PORT` quando a plataforma injeta essa variável, e cai para
+`API_PORT` no ambiente local.
+
+### Front-end (Vercel)
+
+```text
+Root Directory:   apps/web
+Install:          cd ../.. && pnpm install --frozen-lockfile
+Build:            pnpm build
+Output:           dist
+```
+
+Variável: `VITE_API_URL` com a URL da API no Render.
+
+O `apps/web/vercel.json` reescreve qualquer rota sem arquivo estático
+correspondente para `index.html`. Sem isso o roteamento client-side quebra ao
+abrir um link direto — e o **ingresso compartilhado é sempre aberto assim**.
+
+### Sobre o ambiente publicado
+
+O plano gratuito do Render hiberna após alguns minutos sem tráfego, então a
+**primeira requisição pode levar cerca de 50 segundos**. Não está quebrado, está
+acordando.
+
+O ambiente publicado é uma demonstração: roda com os usuários semeados e senha
+conhecida, documentados acima, justamente para permitir a avaliação.
 
 ## Decisões de engenharia
 
@@ -221,6 +383,6 @@ O uso de IA, com os pontos em que ela errou, está em
 
 ## Melhorias futuras
 
-Deixadas de fora conscientemente: busca e filtro, painel do organizador com
-vendas, cancelamento com devolução ao estoque, assentos em tempo real por
-WebSocket, e-mail de confirmação, e observabilidade.
+Deixadas de fora conscientemente: busca e filtro, cancelamento com devolução ao
+estoque, assentos em tempo real por WebSocket, e-mail de confirmação, e
+observabilidade.

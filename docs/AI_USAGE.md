@@ -58,6 +58,25 @@ PostgreSQL. Outro falhava porque tentava criar dois eventos na mesma sala e
 horário — e a API recusava, corretamente. Mexer no serviço teria "consertado" o
 teste e quebrado o produto.
 
+**O servidor de desenvolvimento rodava código de cinco dias antes.** Uma
+compilação antiga havia emitido para `dist/src/`, o Nest CLI prefere esse
+caminho quando ele existe, e a compilação incremental nunca reescreveu por cima.
+O resultado: `/health` respondia e toda rota criada depois devolvia 404 — com a
+suíte inteira verde, porque os testes importam o módulo direto e nunca tocam em
+`dist`. Só apareceu quando fui abrir a aplicação no navegador. Minha primeira
+correção piorou: limpar o `dist` a cada build, combinado com o cache incremental
+sobrevivente, produzia uma pasta vazia e um build que nem iniciava. A correção
+certa foi mover o cache para dentro do `dist`, amarrando os dois ciclos de vida.
+
+**Quinze testes de interface, dez falhando pela mesma causa.** O `cleanup` da
+Testing Library nunca era registrado, porque ele só se auto-registra quando o
+Vitest roda com `globals`. As árvores renderizadas se acumulavam entre os testes.
+Os quatro testes que já existiam passavam por sorte — consultavam textos que por
+acaso continuavam únicos. Um deles ficou vermelho por culpa do meu próprio
+mock, que detectava erro HTTP procurando um campo `status`, sem perceber que
+`ReservationDto` tem um `status` legítimo: um pagamento aprovado era lido como
+falha.
+
 **Tendência a acrescentar.** Sempre que eu abria espaço, a proposta vinha maior
 do que o necessário. Os cortes — sem busca, sem tempo real, sem entidade de
 pagamento separada, sem agendador — foram todos meus.
@@ -68,6 +87,12 @@ IA acelera muito a parte mecânica e é uma boa parceira para enumerar
 alternativas. Mas ela otimiza para o critério que você escreveu, e o meu
 critério estava incompleto: eu tinha portão para comportamento e não tinha para
 compilação nem para inicialização.
+
+Há um padrão nos quatro casos acima: todos passaram por revisão automatizada
+sem serem notados, e todos apareceram no momento em que alguém executou a coisa
+de verdade. Teste verde prova comportamento. Não prova que o projeto compila,
+não prova que ele sobe, e não prova que o que sobe é o código de hoje — são
+quatro garantias diferentes, e cada uma precisa do seu próprio portão.
 
 A revisão que encontrou os defeitos reais não foi a automatizada — foi rodar o
 programa.

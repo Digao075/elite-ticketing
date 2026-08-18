@@ -31,7 +31,7 @@ Isso produziu, ao longo do desafio:
 | Decisões registradas em log | 93 |
 | Relatórios de revisão independente | 11 |
 | ADRs | 8 |
-| Testes automatizados | 278 |
+| Testes automatizados | 305 |
 
 ## Por que `.pipeline/` não está neste repositório
 
