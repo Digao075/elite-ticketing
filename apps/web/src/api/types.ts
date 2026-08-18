@@ -54,3 +54,18 @@ export type MovieSummary = {
   posterPath: string | null;
   overview: string;
 };
+
+export type OrganizerEvent = {
+  id: string;
+  status: 'DRAFT' | 'PUBLISHED';
+  startsAt: string;
+  venueName: string;
+  auditoriumName: string;
+  priceCents: number | null;
+  capacity: number;
+  ticketsSold: number;
+  remainingSeats: number;
+  revenueCents: number;
+  readyToPublish: boolean;
+  content: { title: string; posterPath: string | null; runtimeMinutes: number; genres: string[] };
+};

@@ -6,6 +6,7 @@ import { DatabaseModule } from './database/database.module';
 import { DiscoveryModule } from './discovery/discovery.module';
 import { EventsModule } from './events/events.module';
 import { GateModule } from './gate/gate.module';
+import { OrganizerModule } from './organizer/organizer.module';
 import { ReservationsModule } from './reservations/reservations.module';
 import { TicketsModule } from './tickets/tickets.module';
 import { HealthController } from './health.controller';
@@ -24,6 +25,7 @@ import { UsersModule } from './users/users.module';
     TicketsModule,
     ReservationsModule,
     GateModule,
+    OrganizerModule,
   ],
   controllers: [HealthController],
 })

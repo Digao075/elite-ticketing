@@ -4,6 +4,7 @@ import { ApiError, apiRequest, formatBRL, posterUrl } from '../api/client';
 import type { MovieSummary } from '../api/types';
 import { useAuth } from '../auth/AuthContext';
 import { Banner, Spinner } from '../components/states';
+import { OrganizerEventList } from '../components/OrganizerEventList';
 
 type Draft = { id: string; title: string };
 
@@ -34,6 +35,9 @@ export function OrganizerPage() {
   const [published, setPublished] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Bumped whenever the wizard changes something the dashboard displays.
+  const [version, setVersion] = useState(0);
+  const refreshDashboard = () => setVersion((current) => current + 1);
 
   const fail = (cause: unknown, fallback: string) =>
     setError(cause instanceof ApiError ? cause.message : fallback);
@@ -73,6 +77,7 @@ export function OrganizerPage() {
         },
       });
       setDraft({ id: created.id, title: chosen.title });
+      refreshDashboard();
     } catch (cause) {
       fail(cause, 'Não foi possível criar o evento.');
     } finally {
@@ -95,6 +100,7 @@ export function OrganizerPage() {
         },
       });
       setSeated(result.capacity);
+      refreshDashboard();
     } catch (cause) {
       fail(cause, 'Não foi possível configurar os assentos.');
     } finally {
@@ -109,6 +115,7 @@ export function OrganizerPage() {
     try {
       await apiRequest(`/events/${draft.id}/publish`, { method: 'POST', token });
       setPublished(true);
+      refreshDashboard();
     } catch (cause) {
       fail(cause, 'Não foi possível publicar.');
     } finally {
@@ -123,7 +130,9 @@ export function OrganizerPage() {
 
   return (
     <div className="mx-auto max-w-2xl space-y-6">
-      <div>
+      <OrganizerEventList token={token} version={version} />
+
+      <div className="border-t border-stone-800 pt-6">
         <h1 className="text-2xl font-semibold">Nova sessão</h1>
         <p className="text-sm text-stone-400">Passo {step} de 4</p>
       </div>
