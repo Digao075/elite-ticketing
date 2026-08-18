@@ -1,0 +1,52 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# A newer push makes an in-flight run obsolete; cancel it rather than pay for it.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+# The pipeline only reads the repository. Nothing here publishes or deploys.
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    name: Typecheck, test and build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.16.0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      # --frozen-lockfile fails if pnpm-lock.yaml disagrees with the manifests,
+      # so a dependency added without committing the lockfile breaks here rather
+      # than on a reviewer's machine.
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # Deliberately the same command a developer runs locally. It typechecks,
+      # starts a disposable PostgreSQL through Docker Compose, applies the
+      # migrations, runs the whole suite and tears the container down. Keeping
+      # CI and local identical means a green pipeline means what it says.
+      #
+      # No secrets are required: the runner supplies inert test-only values and
+      # every external call is stubbed, so the suite is hermetic.
+      - name: Typecheck and test
+        run: pnpm test
+
+      - name: Build both applications
+        run: pnpm build
