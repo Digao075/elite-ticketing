@@ -10,16 +10,16 @@ pela câmera.
 
 ## Avalie em 5 minutos
 
-> **Aplicação publicada:** _<preencher após o deploy>_
+> **Aplicação publicada:** https://elite-ticketing-web.vercel.app/
 > **Repositório:** https://github.com/Digao075/elite-ticketing
 
 Todos os usuários abaixo usam a senha `Elite@2026`:
 
-| Papel | E-mail |
-|---|---|
-| Cliente | `cliente1@elite.test` |
+| Papel       | E-mail                   |
+| ----------- | ------------------------ |
+| Cliente     | `cliente1@elite.test`    |
 | Organizador | `organizador@elite.test` |
-| Portaria | `portaria@elite.test` |
+| Portaria    | `portaria@elite.test`    |
 
 O caminho abaixo percorre o fluxo inteiro e demonstra as duas invariantes que o
 enunciado pede — assento não vendido duas vezes e ingresso não validado duas
@@ -30,7 +30,7 @@ vezes:
 3. Entre como **cliente** e reserve.
 4. No checkout, use **"Simular pagamento recusado"** primeiro. Volte ao evento:
    **os assentos voltaram para o estoque.**
-5. Reserve de novo e agora **aprove**. Em *Meus ingressos* o QR é exibido.
+5. Reserve de novo e agora **aprove**. Em _Meus ingressos_ o QR é exibido.
 6. Saia, entre como **portaria**, cole o código `v1.…` e valide: **`VALID`**.
    Valide o mesmo código outra vez: **`ALREADY_USED`**.
 
@@ -75,13 +75,13 @@ sem aviso.
 
 ## Stack
 
-| Camada | Escolha |
-|---|---|
-| Front-end | React 19, TypeScript, Vite, Tailwind CSS |
-| Back-end | NestJS 11, TypeScript, REST |
-| Banco | PostgreSQL 16 via Prisma |
-| Testes | Vitest, Supertest, Testing Library |
-| Infra local | Docker Compose |
+| Camada      | Escolha                                  |
+| ----------- | ---------------------------------------- |
+| Front-end   | React 19, TypeScript, Vite, Tailwind CSS |
+| Back-end    | NestJS 11, TypeScript, REST              |
+| Banco       | PostgreSQL 16 via Prisma                 |
+| Testes      | Vitest, Supertest, Testing Library       |
+| Infra local | Docker Compose                           |
 
 ## Arquitetura
 
@@ -168,28 +168,28 @@ já cria uma sessão publicada.
 
 Todos usam a senha `Elite@2026`:
 
-| Papel | E-mail |
-|---|---|
+| Papel       | E-mail                   |
+| ----------- | ------------------------ |
 | Organizador | `organizador@elite.test` |
-| Cliente | `cliente1@elite.test` |
-| Cliente | `cliente2@elite.test` |
-| Portaria | `portaria@elite.test` |
+| Cliente     | `cliente1@elite.test`    |
+| Cliente     | `cliente2@elite.test`    |
+| Portaria    | `portaria@elite.test`    |
 
 O seed também cria o evento **"Clube da Luta"** publicado, com 24 assentos a
 R$ 35,00. É idempotente: rodar de novo converge para o mesmo estado.
 
 ## Variáveis de ambiente
 
-| Variável | Para quê |
-|---|---|
-| `DATABASE_URL` | Conexão PostgreSQL |
-| `POSTGRES_PORT` | Porta publicada pelo container |
-| `API_PORT` | Porta da API |
-| `VITE_API_URL` | Base da API para o front-end |
-| `TMDB_API_KEY` | Catálogo de filmes (só o organizador precisa) |
-| `AUTH_JWT_SECRET` | Assina os tokens de acesso |
-| `CONTENT_SELECTION_SECRET` | Assina a seleção de conteúdo do organizador |
-| `TICKET_QR_SECRET` | Assina o QR do ingresso |
+| Variável                   | Para quê                                      |
+| -------------------------- | --------------------------------------------- |
+| `DATABASE_URL`             | Conexão PostgreSQL                            |
+| `POSTGRES_PORT`            | Porta publicada pelo container                |
+| `API_PORT`                 | Porta da API                                  |
+| `VITE_API_URL`             | Base da API para o front-end                  |
+| `TMDB_API_KEY`             | Catálogo de filmes (só o organizador precisa) |
+| `AUTH_JWT_SECRET`          | Assina os tokens de acesso                    |
+| `CONTENT_SELECTION_SECRET` | Assina a seleção de conteúdo do organizador   |
+| `TICKET_QR_SECRET`         | Assina o QR do ingresso                       |
 
 Nenhum segredo real está versionado. `.env.example` traz apenas placeholders.
 
@@ -234,11 +234,11 @@ não com mocks. Para conferir só elas:
 pnpm --dir apps/api exec vitest run ../../tests/api/journey
 ```
 
-| O que prova | Teste |
-|---|---|
-| Um assento nunca é vendido duas vezes | `AC-3 never sells one seat twice and reclaims expired holds` |
-| Um ingresso nunca é validado duas vezes | `AC-6 concurrent scans of one unused ticket yield a single VALID` |
-| QR forjado ou adulterado é recusado | `AC-5 and AC-6 reject forged QR codes and consume a ticket exactly once` |
+| O que prova                             | Teste                                                                    |
+| --------------------------------------- | ------------------------------------------------------------------------ |
+| Um assento nunca é vendido duas vezes   | `AC-3 never sells one seat twice and reclaims expired holds`             |
+| Um ingresso nunca é validado duas vezes | `AC-6 concurrent scans of one unused ticket yield a single VALID`        |
+| QR forjado ou adulterado é recusado     | `AC-5 and AC-6 reject forged QR codes and consume a ticket exactly once` |
 
 Do lado da interface, `tests/web/journey.test.tsx` cobre o outro lado da mesma
 invariante: quando a API responde `409` porque alguém levou o assento primeiro,
@@ -247,24 +247,24 @@ existe mais.
 
 ## API
 
-| Método | Rota | Papel | O que faz |
-|---|---|---|---|
-| `POST` | `/auth/login` | público | Token de acesso |
-| `GET` | `/catalog/movies` | organizador | Busca no TMDb |
-| `GET` | `/catalog/movies/popular` | organizador | Descoberta |
-| `GET` | `/catalog/movies/:id` | organizador | Detalhe canônico |
-| `POST` | `/events` | organizador | Cria rascunho (idempotente) |
-| `GET` | `/events/:id` | organizador | Evento próprio |
-| `PUT` | `/events/:id/seats` | organizador | Assentos e preço |
-| `POST` | `/events/:id/publish` | organizador | Publica |
-| `GET` | `/organizer/events` | organizador | Painel: sessões próprias com vendas |
-| `GET` | `/events` | **público** | Eventos publicados |
-| `GET` | `/events/:id/public` | **público** | Detalhe com disponibilidade |
-| `POST` | `/reservations` | cliente | Reserva assentos |
-| `POST` | `/reservations/:id/payment` | cliente | Pagamento simulado |
-| `GET` | `/tickets/me` | cliente | Meus ingressos |
-| `GET` | `/tickets/shared/:token` | **público** | Ingresso compartilhado |
-| `POST` | `/gate/validations` | portaria | Valida o QR |
+| Método | Rota                        | Papel       | O que faz                           |
+| ------ | --------------------------- | ----------- | ----------------------------------- |
+| `POST` | `/auth/login`               | público     | Token de acesso                     |
+| `GET`  | `/catalog/movies`           | organizador | Busca no TMDb                       |
+| `GET`  | `/catalog/movies/popular`   | organizador | Descoberta                          |
+| `GET`  | `/catalog/movies/:id`       | organizador | Detalhe canônico                    |
+| `POST` | `/events`                   | organizador | Cria rascunho (idempotente)         |
+| `GET`  | `/events/:id`               | organizador | Evento próprio                      |
+| `PUT`  | `/events/:id/seats`         | organizador | Assentos e preço                    |
+| `POST` | `/events/:id/publish`       | organizador | Publica                             |
+| `GET`  | `/organizer/events`         | organizador | Painel: sessões próprias com vendas |
+| `GET`  | `/events`                   | **público** | Eventos publicados                  |
+| `GET`  | `/events/:id/public`        | **público** | Detalhe com disponibilidade         |
+| `POST` | `/reservations`             | cliente     | Reserva assentos                    |
+| `POST` | `/reservations/:id/payment` | cliente     | Pagamento simulado                  |
+| `GET`  | `/tickets/me`               | cliente     | Meus ingressos                      |
+| `GET`  | `/tickets/shared/:token`    | **público** | Ingresso compartilhado              |
+| `POST` | `/gate/validations`         | portaria    | Valida o QR                         |
 
 ## Deploy
 
