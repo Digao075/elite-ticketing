@@ -21,12 +21,17 @@ async function bootstrap() {
   // browser needs an explicit allowance. Kept to an allowlist rather than `*`
   // so the API does not accept credentialed calls from arbitrary pages.
   app.enableCors({
-    origin: (process.env.WEB_ORIGIN ?? 'http://localhost:5173,http://127.0.0.1:5173').split(','),
+    origin: (process.env.WEB_ORIGIN ?? 'http://localhost:5173,http://127.0.0.1:5173')
+      .split(',')
+      .map((entry) => entry.trim())
+      .filter((entry) => entry.length > 0),
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'],
     allowedHeaders: ['Content-Type', 'Authorization', 'Idempotency-Key'],
   });
 
-  await app.listen(process.env.API_PORT ?? 3000);
+  // Managed platforms inject PORT and expect the process to bind every
+  // interface. API_PORT stays supported so local setups keep working.
+  await app.listen(process.env.PORT ?? process.env.API_PORT ?? 3000, '0.0.0.0');
 }
 
 void bootstrap();
